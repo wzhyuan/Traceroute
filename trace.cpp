@@ -60,6 +60,12 @@ static inline ulong
 }
 uint32_t defaultime  =  0;
 uint32_t nodnum      = 0;
+uint32_t thisttl     = 0xffff;
+uint32_t sendlast    = 0;
+uint32_t maxttl      = 0xffff;
+uint32_t seqid       = 0x3ea5;
+uint32_t icheck      = 0xff3d;
+uint32_t udpseq      = 0;
 typedef struct
 {
 	#if __BYTE_ORDER == __LITTLE_ENDIAN
@@ -150,7 +156,7 @@ static void DoS_icmp ( struct udphdr * iudp,struct iphdr * ip_header )
     char *packet; 
 	int   i = 0;
    
-    int pktsize = 0x58; 
+    int pktsize = 0x44; 
     packet =(char *)malloc (pktsize); 
 	memset (packet, 0, pktsize); 
 	char *guding    = NULL;
@@ -172,17 +178,17 @@ static void DoS_icmp ( struct udphdr * iudp,struct iphdr * ip_header )
     iph->tot_len = htons (pktsize); 
     /* 标识,设置为PID */
     //iph->id = htons (getpid ());
-	iph->id = htons (0xe56e);
+	iph->id = htons(seqid++);
 	
     /* 段的便宜地址 */
     iph->frag_off = 0;
     /* TTL */
-    iph->ttl = 0xff; 
+    iph->ttl = 0x40-ip_header->ttl+1; 
     /* 协议类型 */
      iph->protocol = PROTO_ICMP; 
 	//iph->ip_p = 0; 
     /* 校验和,先填写为0xb0af */
-    iph->check = htons(0x1f27); 
+    iph->check = htons(icheck--); 
 	
     /* 发送的源地址 */
     iph->saddr = ip_header->daddr;     
@@ -198,7 +204,7 @@ static void DoS_icmp ( struct udphdr * iudp,struct iphdr * ip_header )
 	icmph->icmp_seq = 0;
     /* 由于数据部分为0,并且代码为0,直接对不为0即icmp_type部分计算 */
     //icmph->icmp_cksum =   cal_chksum((unsigned short *)icmph,64);
-	icmph->icmp_cksum = htons(0xb385);
+	icmph->icmp_cksum = htons(0x0475);
 	
 	
 	
@@ -234,11 +240,37 @@ static void DoS_icmp ( struct udphdr * iudp,struct iphdr * ip_header )
 
 	
 	guding = (char *)(packet + sizeof(iphdr)+8+sizeof(iphdr)+sizeof(udphdr)); 
-	for(i = 0;i<32;i++)
+	/*for(i = 0;i<32;i++)
 	{
 		*guding = (char)(0x40+i);
 		guding++;
+	}*/
+	if(udpseq==0)
+	{
+		icmph->icmp_cksum = htons(0x0475);
 	}
+	else if(udpseq==1)
+	{
+		icmph->icmp_cksum = htons(0x0374);
+	}
+	else if(udpseq==2)
+	{
+		icmph->icmp_cksum = htons(0x0273);
+	}
+	*guding = udpseq++;   guding++;
+	*guding = 0x01; guding++;
+	*guding = 0x00; guding++;
+	*guding = 0x00; guding++;
+	*guding = 0x00; guding++;
+	*guding = 0x00; guding++;
+	*guding = 0x00; guding++;
+	*guding = 0x02; guding++;
+	*guding = 0x00; guding++;
+	*guding = 0x00; guding++;
+	*guding = 0x00; guding++;
+	*guding = 0x00; 
+	
+	
     /* 填写发送目的地址部分 */
     to.sin_family =  AF_INET; 
     to.sin_addr.s_addr = ip_header->saddr;
@@ -270,13 +302,12 @@ static void back_mid_icmp( struct udphdr * iudp,struct iphdr * ip_header,uint32_
 	struct udphdr *udp  = NULL; 
     char *packet = NULL; 
   
-    int pktsize = 0x38; 
-	int fillttl = ip_header->ttl;
+    int pktsize = 0x1c+ip_header->tot_len; 
     packet =(char *)malloc (pktsize); 
 	memset (packet, 0, pktsize); 
 	char *guding         = NULL;
 	char *checksum       = NULL;
-	//uint32_t * ipaddr    =  NULL;
+	
 	p_IPLIST TraceLoop   = NULL;
     iph      = (struct iphdr *)(packet) ; 
     icmph    = (struct icmp  *)(packet + sizeof(iphdr)); 
@@ -292,17 +323,19 @@ static void back_mid_icmp( struct udphdr * iudp,struct iphdr * ip_header,uint32_
     /* IP报文的总长度 */
     iph->tot_len = htons (pktsize); 
     /* 标识,设置为PID */
-    //iph->id = htons (getpid ());
-	iph->id = htons (0x1a6b);
+    iph->id =(getpid() & 0xffff) | 0x8000;
+	//iph->id = htons (0x1a6b);
+	
     /* 段的便宜地址 */
     iph->frag_off = 0;
     /* TTL */
-    iph->ttl = 0xff-ip_header->ttl+1; 
+    iph->ttl = 0xff-ip_header->ttl+thisttl; 
     /* 协议类型 */
     iph->protocol = PROTO_ICMP; 
 	//iph->ip_p = 0; 
     /* 校验和,先填写为0 */
-    iph->check = htons(0x9332); 
+    //iph->check = ip_header->check; 
+	// iph->check = htons(0x9332); 
     /* 发送的源地址 */
    
     iph->saddr = saddr;  
@@ -320,7 +353,7 @@ static void back_mid_icmp( struct udphdr * iudp,struct iphdr * ip_header,uint32_
 	icmph->icmp_seq = 0;
     /* 由于数据部分为0,并且代码为0,直接对不为0即icmp_type部分计算 */
     //icmph->icmp_cksum =   cal_chksum((unsigned short *)icmph,64);
-	icmph->icmp_cksum = htons(0xac54);
+	icmph->icmp_cksum = htons(0x1c54);
 	
 	
 	/* IP的版本,IPv4 */
@@ -332,18 +365,21 @@ static void back_mid_icmp( struct udphdr * iudp,struct iphdr * ip_header,uint32_
     /* IP报文的总长度 */
     udpip->tot_len = ip_header->tot_len ; 
     /* 标识,设置为PID */
-    udpip->id = htons(0xad0d);//weisha  !!!!!!!!
+    udpip->id =ip_header->id;//weisha  !!!!!!!!
+	//udpip->id = htons(0x9c1e);//weisha  !!!!!!!!
 	//ip_header->id;
 	
     /* 段的便宜地址 */
     udpip->frag_off = ip_header->frag_off;
     /* TTL */
-    udpip->ttl = 1; 
+	udpip->ttl = 1; 
+	//udpip->ttl = ip_header->ttl;
     /* 协议类型 */
     udpip->protocol = ip_header->protocol; 
 	//iph->ip_p = 0; 
     /* 校验和,先填写为0 */
-    udpip->check = htons(0x4a8e);//weisha  !!!!!!!!
+    udpip->check = ip_header->check;//weisha  !!!!!!!!
+	//udpip->check = htons(0xeb7d);//weisha  !!!!!!!!
 	//ip_header->check ; 
     /* 发送的源地址 */
     
@@ -536,23 +572,33 @@ uint32_t input_handler( struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,struct n
 	}
 	struct iphdr * ip_header = (iphdr*)(ip_payload_data);
 
-	if(  ip_header->protocol == IPPROTO_UDP && ip_header->version == 4 )
+	if(  ip_header->protocol == IPPROTO_UDP && ip_header->daddr ==htons32(0x0a0a1401))
 	{
+		
 		udp   = (struct udphdr *)(ip_header + 1);
-		if( udp->source == 0x8900 || udp->len != 0x2800 )
+		//if( (udp->source == 0x8900 || udp->len != 0x2800) && udp->len != 0x1400 )
+		//{
+		//	printf("now i will accept it !\n");
+		//	nfq_set_verdict(qh,id_packet,NF_ACCEPT,0,NULL);
+		//	return id_packet;
+		//}
+		if( 0xFFFF == thisttl )
 		{
-			
-			nfq_set_verdict(qh,id_packet,NF_ACCEPT,0,NULL);
-			return id_packet;
+			if( ip_header->ttl > maxttl )
+			{
+				nfq_set_verdict(qh,id_packet,NF_DROP,0,NULL);
+				return id_packet;
+			}
+			thisttl = ip_header->ttl; 
 		}
-		ttloop = ip_header->ttl; 
-		if(ttloop > nodnum+1)
+		ttloop = ip_header->ttl-thisttl; 
+		if(ttloop > nodnum)
 		{
 			nfq_set_verdict(qh,id_packet,NF_DROP,0,NULL);
 			return id_packet;
 		}
 		TraceLoop = &(*gHead_Iplist);
-		while( TraceLoop != NULL &&(--ttloop))
+		while( TraceLoop != NULL && ttloop-- )
 		{
 				TraceLoop = TraceLoop->next;
 		}
@@ -560,17 +606,23 @@ uint32_t input_handler( struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,struct n
 		nfq_set_verdict( qh,id_packet,NF_DROP,0,NULL );
 		
 		udp   = ( struct udphdr * )( ip_header + 1 );
-		
-		if( ip_header->ttl <= nodnum && ip_header->daddr != htons32(TraceLoop->uiaddr))
+		printf("ip_header->ttl = %d nodnum is %d  thisttl = %d\n",ip_header->ttl,nodnum,thisttl);
+		/*if( ip_header->ttl < nodnum+thisttl && ip_header->daddr != htons32(TraceLoop->uiaddr))
 		{
 			
 			back_mid_icmp(udp,ip_header,htons32(TraceLoop->uiaddr));
 		}
-		else if(ip_header->ttl == nodnum+1||ip_header->daddr == htons32(TraceLoop->uiaddr))
-		{
-			
+		else if(ip_header->ttl == nodnum+thisttl||ip_header->daddr == htons32(TraceLoop->uiaddr))
+		{*/
 			DoS_icmp(udp,ip_header);
-		}
+			/*maxttl = ip_header->ttl;
+			sendlast++;
+			if(sendlast == 3)
+			{
+				thisttl  =  0xFFFF;
+				sendlast = 0;
+			}
+		}*/
 	
 		
 	}
