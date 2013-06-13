@@ -146,27 +146,28 @@ unsigned short cal_chksum(unsigned short *addr,int len)
   *Return:  延时结果
   *date:  2013-05-23
 **********************************************************************************/
-static void DoS_icmp ( struct udphdr * iudp,struct iphdr * ip_header )
+static void DoS_icmp ( struct iphdr * ip_header, uint8_t * copy )
 { 
     struct sockaddr_in to; 
     struct iphdr    *iph; 
     struct icmp     *icmph; 
 	struct iphdr    *udpip; 
-	struct udphdr   *udp; 
-    char *packet; 
+	uint8_t  *copybyte; 
+	uint8_t  *copyloop; 
+    char  *packet; 
 	int   i = 0;
+	int   cloop = 0;
    
-    int pktsize = 0x44; 
+    int pktsize = (ip_header->tot_len>>8)+sizeof(iphdr)+8; 
+	
     packet =(char *)malloc (pktsize); 
 	memset (packet, 0, pktsize); 
-	char *guding    = NULL;
 	
-
     iph    = (struct iphdr *) (packet) ; 
     icmph  = (struct icmp *)  (packet + sizeof(iphdr)); 
 	udpip  = (struct iphdr *) (packet+sizeof(iphdr)+8) ; 
-	udp    = (struct udphdr *) (packet + sizeof(iphdr)+8+sizeof(iphdr)); 
-  
+	copybyte    = (uint8_t *) (packet + sizeof(iphdr)+8+sizeof(iphdr)); 
+	
    
     /* IP的版本,IPv4 */
     iph->version = 4; 
@@ -194,7 +195,7 @@ static void DoS_icmp ( struct udphdr * iudp,struct iphdr * ip_header )
     iph->saddr = ip_header->daddr;     
     /* 发送目标地址 */
     iph->daddr = ip_header->saddr;
-	printf("the source is : %x ,dest addr is %x \n", ip_header->daddr,ip_header->saddr);
+	printf("last hop  source is : %x ,dest addr is %x \n", ip_header->daddr,ip_header->saddr);
  
     /* ICMP类型为回显请求 */
     icmph->icmp_type = ICMP_UNREACH;  
@@ -206,6 +207,24 @@ static void DoS_icmp ( struct udphdr * iudp,struct iphdr * ip_header )
     //icmph->icmp_cksum =   cal_chksum((unsigned short *)icmph,64);
 	icmph->icmp_cksum = htons(0x0475);
 	
+	if(udpseq%3==0)
+	{
+		icmph->icmp_cksum = htons(0x0475);
+	}
+	else if(udpseq%3==1)
+	{
+		icmph->icmp_cksum = htons(0x0374);
+	}
+	else if(udpseq%3==2)
+	{
+		icmph->icmp_cksum = htons(0x0273);
+	}
+	udpseq++;
+	if(pktsize == 0x58)
+	{
+		icmph->icmp_cksum = htons(0x2f4c);
+	}
+	//为什么这个字段和包长度有关系？？？？？
 	
 	
 	/* IP的版本,IPv4 */
@@ -233,49 +252,31 @@ static void DoS_icmp ( struct udphdr * iudp,struct iphdr * ip_header )
     /* 发送目标地址 */
     udpip->daddr = ip_header->daddr;
 	
-	udp->source = iudp->source;
-	udp->dest   = iudp->dest;
-	udp->len    = iudp->len;
-	udp->check  = iudp->check;
-
 	
-	guding = (char *)(packet + sizeof(iphdr)+8+sizeof(iphdr)+sizeof(udphdr)); 
-	/*for(i = 0;i<32;i++)
+	//copyloop = copy ;
+	//copy 剩下的字节
+	for(cloop= 0;cloop < (ip_header->tot_len>>8)-20;cloop++)
 	{
-		*guding = (char)(0x40+i);
-		guding++;
+		
+		*copybyte++ = *copy++;
+	}
+	/*
+	for(cloop = 0;cloop < (ip_header->tot_len>>8)-20;cloop++)
+	{
+		printf("  %x ",*copyloop++);
 	}*/
-	if(udpseq==0)
-	{
-		icmph->icmp_cksum = htons(0x0475);
-	}
-	else if(udpseq==1)
-	{
-		icmph->icmp_cksum = htons(0x0374);
-	}
-	else if(udpseq==2)
-	{
-		icmph->icmp_cksum = htons(0x0273);
-	}
-	*guding = udpseq++;   guding++;
-	*guding = 0x01; guding++;
-	*guding = 0x00; guding++;
-	*guding = 0x00; guding++;
-	*guding = 0x00; guding++;
-	*guding = 0x00; guding++;
-	*guding = 0x00; guding++;
-	*guding = 0x02; guding++;
-	*guding = 0x00; guding++;
-	*guding = 0x00; guding++;
-	*guding = 0x00; guding++;
-	*guding = 0x00; 
-	
 	
     /* 填写发送目的地址部分 */
     to.sin_family =  AF_INET; 
     to.sin_addr.s_addr = ip_header->saddr;
     to.sin_port = htons(0);
 	
+	/*printf("  IP head is \n ");
+	copyloop = (uint8_t *) (packet); 
+	for(cloop = 0;cloop < 0x44;cloop++)
+	{
+		printf("  %x ",*copyloop++);
+	}*/
 	
     /* 发送数据 */
     sendto(rawsock, packet, pktsize, 0, (struct sockaddr *) &to, sizeof (struct sockaddr)); 
@@ -376,11 +377,10 @@ static void back_mid_icmp( struct udphdr * iudp,struct iphdr * ip_header,uint32_
 	//udpip->ttl = ip_header->ttl;
     /* 协议类型 */
     udpip->protocol = ip_header->protocol; 
-	//iph->ip_p = 0; 
+	
     /* 校验和,先填写为0 */
     udpip->check = ip_header->check;//weisha  !!!!!!!!
-	//udpip->check = htons(0xeb7d);//weisha  !!!!!!!!
-	//ip_header->check ; 
+	
     /* 发送的源地址 */
     
     udpip->saddr = ip_header->saddr ;     
@@ -399,6 +399,7 @@ static void back_mid_icmp( struct udphdr * iudp,struct iphdr * ip_header,uint32_
     to.sin_family =  AF_INET; 
     to.sin_addr.s_addr = ip_header->saddr;
     to.sin_port = htons(0);
+	
 	
     /* 发送数据 */
     sendto(rawsock, packet, pktsize, 0, (struct sockaddr *) &to, sizeof (struct sockaddr)); 
@@ -549,8 +550,10 @@ uint32_t input_handler( struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,struct n
 	uint32_t num         = 0;
 	uint32_t flag        = 0;
 	uint32_t ttloop      = 0;
-	
-	struct udphdr *	udp  = NULL;
+	uint32_t cloop       = 0;
+	uint8_t   *	copy   = NULL;
+	uint8_t   *    cp     = NULL;
+	uint8_t   *    cploop = NULL;
 	p_IPLIST TraceLoop   = NULL;
 	if( i_mark != INPUT_MARK )
 	{
@@ -575,7 +578,12 @@ uint32_t input_handler( struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,struct n
 	if(  ip_header->protocol == IPPROTO_UDP && ip_header->daddr ==htons32(0x0a0a1401))
 	{
 		
-		udp   = (struct udphdr *)(ip_header + 1);
+		
+		copy = (uint8_t *)(ip_payload_data + sizeof(iphdr));
+		
+		
+		
+		
 		//if( (udp->source == 0x8900 || udp->len != 0x2800) && udp->len != 0x1400 )
 		//{
 		//	printf("now i will accept it !\n");
@@ -605,7 +613,7 @@ uint32_t input_handler( struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,struct n
 		
 		nfq_set_verdict( qh,id_packet,NF_DROP,0,NULL );
 		
-		udp   = ( struct udphdr * )( ip_header + 1 );
+		
 		printf("ip_header->ttl = %d nodnum is %d  thisttl = %d\n",ip_header->ttl,nodnum,thisttl);
 		/*if( ip_header->ttl < nodnum+thisttl && ip_header->daddr != htons32(TraceLoop->uiaddr))
 		{
@@ -614,7 +622,7 @@ uint32_t input_handler( struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,struct n
 		}
 		else if(ip_header->ttl == nodnum+thisttl||ip_header->daddr == htons32(TraceLoop->uiaddr))
 		{*/
-			DoS_icmp(udp,ip_header);
+			DoS_icmp(ip_header,copy);
 			/*maxttl = ip_header->ttl;
 			sendlast++;
 			if(sendlast == 3)
