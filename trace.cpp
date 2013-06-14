@@ -105,7 +105,7 @@ uint16_t cal_chksum(uint16_t *add,int len)
 		nleft--;
 	}
 
-	if(nleft == 1)		//ICMP涓哄鏁板瓧鑺傛椂锛岃浆鎹㈡渶鍚庝竴涓瓧鑺傦紝缁х画绱姞
+	if(nleft == 1)		//最后一个如果不够16bit，放在高位，后面补0
 	{
 		*(uint16_t *)(&check_sum) = *(uint16_t *)w;
 		sum += check_sum;
@@ -136,15 +136,15 @@ static void send_last_icmp ( struct iphdr * ip_header, uint8_t * copy )
     char  *packet  = NULL; 
 	int   cloop    = 0;
    
-    int pktsize = (ip_header->tot_len>>8)+sizeof(iphdr)+8; 
+    int pktsize = (ip_header->tot_len>>8)+sizeof(iphdr)+sizeof(icmph); 
 	
     packet =(char *)malloc (pktsize); 
 	memset (packet, 0, pktsize); 
 	
     iph    = (struct iphdr *) (packet) ; 
     icmph  = (struct icmp *)  (packet + sizeof(iphdr)); 
-	udpip  = (struct iphdr *) (packet+sizeof(iphdr)+8) ; 
-	copybyte   = (uint8_t *) (packet + sizeof(iphdr)+8+sizeof(iphdr)); 
+	udpip  = (struct iphdr *) (packet+sizeof(iphdr)+sizeof(icmph)) ; 
+	copybyte   = (uint8_t *) (packet + sizeof(iphdr)+sizeof(icmph)+sizeof(iphdr)); 
 	
    
     /* IP的版本,IPv4 */
@@ -259,8 +259,8 @@ static void send_mid_icmp( struct iphdr * ip_header, uint32_t saddr , uint8_t * 
 	p_IPLIST TraceLoop   = NULL;
     iph      = (struct iphdr *)(packet) ; 
     icmph    = (struct icmp  *)(packet + sizeof(iphdr)); 
-	udpip    = (struct iphdr *)(packet + sizeof(iphdr)+8); 
-	copybyte = (uint8_t *) (packet + sizeof(iphdr)+8+sizeof(iphdr)); 
+	udpip    = (struct iphdr *)(packet + sizeof(iphdr)+sizeof(icmph)); 
+	copybyte = (uint8_t *) (packet + sizeof(iphdr)+sizeof(icmph)+sizeof(iphdr)); 
 	
     /* IP的版本,IPv4 */
     iph->version = 4; 
