@@ -315,7 +315,7 @@ static void send_mid_icmp( struct iphdr * ip_header, uint32_t saddr , uint8_t * 
     /* 段的便宜地址 */
     udpip->frag_off = ip_header->frag_off; 
     /* TTL */
-	udpip->ttl = 1;               //此处需注意，不能拷贝原来的序号，中间节点要置为1
+	udpip->ttl = ip_header->ttl;
     /* 协议类型 */
     udpip->protocol = ip_header->protocol;    
     /* 校验和 */
@@ -448,8 +448,9 @@ uint32_t input_handler( struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,struct n
 		printf("ip_header->ttl = %d nodnum is %d  thisttl = %d\n",ip_header->ttl,nodnum,thisttl);
 		if( ip_header->ttl < nodnum+thisttl && ip_header->daddr != htons32(TraceLoop->uiaddr))
 		{
-			
+			usleep(TraceLoop->ftime*1000);
 			send_mid_icmp(ip_header,htons32(TraceLoop->uiaddr),copy);
+			
 		}
 		else if(ip_header->ttl == nodnum+thisttl||ip_header->daddr == htons32(TraceLoop->uiaddr))
 		{
@@ -459,13 +460,10 @@ uint32_t input_handler( struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,struct n
 			if(sendlast == 3)
 			{
 				thisttl  =  0xFFFF;
-				sendlast = 0;
+				sendlast =  0;
 			}
 		}
-	
-		
 	}
-		
 	return id_packet;
 }
 
@@ -659,8 +657,6 @@ int main( int argc, char *argv[] )
 		uiRet = Insert_addr( &gHead_Iplist,&gTail_Iplist,uiIP,mask,ftime);
 		nodnum++;
 	}
-	
-		
 		
 	struct nfq_q_handle *qh = NULL;
 	qh = nfq_create_queue(handler, i_queue_num, &main_handler, NULL);
@@ -691,7 +687,6 @@ int main( int argc, char *argv[] )
 		
 	}
 
-	
 	ploop = &(*gHead_Iplist);
 
 	while( ploop != NULL )
