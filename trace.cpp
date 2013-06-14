@@ -34,38 +34,18 @@
 
 using namespace std;
 #define OK  0 
-#define QUEUE_LEN  1024
-/* 目的IP地址 */
-static unsigned long dest = 0;
+
 /* ICMP协议的值 */
 static int PROTO_ICMP = -1;
 /* 程序活动标志 */
 static int alive = -1;
 static int rawsock;
-/* 随机函数产生函数
-*  由于系统的函数为伪随机函数
-*   其与初始化有关，因此每次用不同值进行初始化
-*/
-static inline ulong
-    myrandom (int begin, int end)
-{
-    int gap = end - begin +1;
-    int ret = 0;
- 
-    /* 用系统时间初始化 */
-    srand((unsigned)time(0));
-    /* 产生一个介于begin和end之间的值 */
-    ret = random()%gap + begin;
-    return ret;
-}
+
 uint32_t defaultime  =  0;
-uint32_t nodnum      = 0;
-uint32_t thisttl     = 0xffff;
-uint32_t sendlast    = 0;
-uint32_t maxttl      = 0xffff;
-uint32_t seqid       = 0x3ea5;
-uint32_t icheck      = 0xff3d;
-uint32_t udpseq      = 0;
+uint32_t nodnum      =  0;
+uint32_t thisttl     =  0xffff;
+uint32_t sendlast    =  0;
+uint32_t maxttl      =  0xffff;
 typedef struct
 {
 	#if __BYTE_ORDER == __LITTLE_ENDIAN
@@ -101,7 +81,6 @@ enum hook_mark
 p_IPLIST gHead_Iplist =  NULL  ;
 p_IPLIST gTail_Iplist =  NULL  ;
 
-pthread_mutex_t mut;
 
 typedef struct
 {
@@ -113,31 +92,31 @@ typedef struct
 
 #define htons32(addr)  ((addr&0xff000000)>>24)+((addr&0xff0000)>>8)+((addr&0xff00)<<8)+((addr&0xff)<<24)
 
-unsigned short cal_chksum(unsigned short *addr,int len)
+uint16_t cal_chksum(uint16_t *add,int len)
 {
 	int nleft = len;
-	int sum = 0;
-	unsigned short *w = addr;
-	unsigned short check_sum = 0;
+	uint32_t sum = 0;
+	uint16_t *w = add;
+	uint16_t check_sum = 0;
 
-	while(nleft>1)		//ICMP鍖呭ご浠ュ瓧锛?瀛楄妭锛変负鍗曚綅绱姞
+	while(nleft>1)		//
 	{
 		sum += *w++;
-		nleft -= 2;
+		nleft--;
 	}
 
 	if(nleft == 1)		//ICMP涓哄鏁板瓧鑺傛椂锛岃浆鎹㈡渶鍚庝竴涓瓧鑺傦紝缁х画绱姞
 	{
-		*(unsigned char *)(&check_sum) = *(unsigned char *)w;
+		*(uint16_t *)(&check_sum) = *(uint16_t *)w;
 		sum += check_sum;
 	}
 	sum = (sum >> 16) + (sum & 0xFFFF);
-	sum += (sum >> 16);
-	check_sum = ~sum;	//鍙栧弽寰楀埌鏍￠獙鍜?
+	sum += (sum>>16);
+	check_sum = (~sum)&0xFFFF;	
 	return check_sum;
 }
 /*********************************************************************************
-  *Function:  DoS_icmp
+  *Function:  send_last_icmp
   *Description：根据IP地址所在的网段，执行相应的延时，默认15ms
   *Calls:  NULL
   *Called By:  thread_start
@@ -146,17 +125,16 @@ unsigned short cal_chksum(unsigned short *addr,int len)
   *Return:  延时结果
   *date:  2013-05-23
 **********************************************************************************/
-static void DoS_icmp ( struct iphdr * ip_header, uint8_t * copy )
+static void send_last_icmp ( struct iphdr * ip_header, uint8_t * copy )
 { 
     struct sockaddr_in to; 
-    struct iphdr    *iph; 
-    struct icmp     *icmph; 
-	struct iphdr    *udpip; 
-	uint8_t  *copybyte; 
-	uint8_t  *copyloop; 
-    char  *packet; 
-	int   i = 0;
-	int   cloop = 0;
+    struct iphdr    *iph   = NULL; 
+    struct icmp     *icmph = NULL; 
+	struct iphdr    *udpip = NULL; 
+	uint8_t  *copybyte = NULL; 
+	uint8_t  *copyloop = NULL; 
+    char  *packet  = NULL; 
+	int   cloop    = 0;
    
     int pktsize = (ip_header->tot_len>>8)+sizeof(iphdr)+8; 
 	
@@ -166,7 +144,7 @@ static void DoS_icmp ( struct iphdr * ip_header, uint8_t * copy )
     iph    = (struct iphdr *) (packet) ; 
     icmph  = (struct icmp *)  (packet + sizeof(iphdr)); 
 	udpip  = (struct iphdr *) (packet+sizeof(iphdr)+8) ; 
-	copybyte    = (uint8_t *) (packet + sizeof(iphdr)+8+sizeof(iphdr)); 
+	copybyte   = (uint8_t *) (packet + sizeof(iphdr)+8+sizeof(iphdr)); 
 	
    
     /* IP的版本,IPv4 */
@@ -178,55 +156,32 @@ static void DoS_icmp ( struct iphdr * ip_header, uint8_t * copy )
     /* IP报文的总长度 */
     iph->tot_len = htons (pktsize); 
     /* 标识,设置为PID */
-    //iph->id = htons (getpid ());
-	iph->id = htons(seqid++);
-	
+	//iph->id //不填会自动填充
     /* 段的便宜地址 */
     iph->frag_off = 0;
     /* TTL */
     iph->ttl = 0x40-ip_header->ttl+1; 
     /* 协议类型 */
-     iph->protocol = PROTO_ICMP; 
-	//iph->ip_p = 0; 
+    iph->protocol = PROTO_ICMP; 
     /* 校验和,先填写为0xb0af */
-    iph->check = htons(icheck--); 
-	
+    //iph->check  //不填会自动填充
     /* 发送的源地址 */
     iph->saddr = ip_header->daddr;     
     /* 发送目标地址 */
     iph->daddr = ip_header->saddr;
-	printf("last hop  source is : %x ,dest addr is %x \n", ip_header->daddr,ip_header->saddr);
- 
-    /* ICMP类型为回显请求 */
+	
+	
+	
+    /* ICMP类型为端口不可达 */
     icmph->icmp_type = ICMP_UNREACH;  
     /* 代码为0 */
     icmph->icmp_code = ICMP_UNREACH_PORT; 
-	
 	icmph->icmp_seq = 0;
-    /* 由于数据部分为0,并且代码为0,直接对不为0即icmp_type部分计算 */
-    //icmph->icmp_cksum =   cal_chksum((unsigned short *)icmph,64);
-	icmph->icmp_cksum = htons(0x0475);
-	
-	if(udpseq%3==0)
-	{
-		icmph->icmp_cksum = htons(0x0475);
-	}
-	else if(udpseq%3==1)
-	{
-		icmph->icmp_cksum = htons(0x0374);
-	}
-	else if(udpseq%3==2)
-	{
-		icmph->icmp_cksum = htons(0x0273);
-	}
-	udpseq++;
-	if(pktsize == 0x58)
-	{
-		icmph->icmp_cksum = htons(0x2f4c);
-	}
-	//为什么这个字段和包长度有关系？？？？？
+    /* 校验和先置为0，后面计算 */
+	icmph->icmp_cksum = 0;
 	
 	
+	/* 拷贝请求报文的IP头 */
 	/* IP的版本,IPv4 */
     udpip->version = ip_header->version; 
     /* IP头部长度,字节数 */
@@ -244,40 +199,28 @@ static void DoS_icmp ( struct iphdr * ip_header, uint8_t * copy )
     udpip->ttl = ip_header->ttl; 
     /* 协议类型 */
     udpip->protocol = ip_header->protocol; 
-	
     udpip->check = ip_header->check ; 
     /* 发送的源地址 */
-    
     udpip->saddr = ip_header->saddr ;     
     /* 发送目标地址 */
     udpip->daddr = ip_header->daddr;
 	
 	
-	//copyloop = copy ;
 	//copy 剩下的字节
-	for(cloop= 0;cloop < (ip_header->tot_len>>8)-20;cloop++)
+	for(cloop = 0; cloop < (ip_header->tot_len>>8)-sizeof(iphdr);cloop++)
 	{
-		
 		*copybyte++ = *copy++;
 	}
-	/*
-	for(cloop = 0;cloop < (ip_header->tot_len>>8)-20;cloop++)
-	{
-		printf("  %x ",*copyloop++);
-	}*/
+	
+	icmph->icmp_cksum = cal_chksum((uint16_t *)icmph,(pktsize - sizeof(iphdr))/2) ;
+	
 	
     /* 填写发送目的地址部分 */
     to.sin_family =  AF_INET; 
     to.sin_addr.s_addr = ip_header->saddr;
     to.sin_port = htons(0);
 	
-	/*printf("  IP head is \n ");
-	copyloop = (uint8_t *) (packet); 
-	for(cloop = 0;cloop < 0x44;cloop++)
-	{
-		printf("  %x ",*copyloop++);
-	}*/
-	
+	printf("last hop  source is : %x ,dest addr is %x \n", ip_header->daddr,ip_header->saddr);
     /* 发送数据 */
     sendto(rawsock, packet, pktsize, 0, (struct sockaddr *) &to, sizeof (struct sockaddr)); 
     /* 释放内存 */
@@ -285,7 +228,7 @@ static void DoS_icmp ( struct iphdr * ip_header, uint8_t * copy )
     free (packet);
 }
 /*********************************************************************************
-  *Function:  back_mid_icmp
+  *Function:  send_mid_icmp
   *Description：根据IP地址所在的网段，执行相应的延时，默认15ms
   *Calls:  NULL
   *Called By:  thread_start
@@ -294,182 +237,117 @@ static void DoS_icmp ( struct iphdr * ip_header, uint8_t * copy )
   *Return:  延时结果
   *date:  2013-05-23
 **********************************************************************************/
-static void back_mid_icmp( struct udphdr * iudp,struct iphdr * ip_header,uint32_t saddr)
+static void send_mid_icmp( struct iphdr * ip_header, uint32_t saddr , uint8_t * copy)
 { 
     struct sockaddr_in to; 
-    struct iphdr *iph   = NULL; 
-    struct icmp  *icmph = NULL; 
-	struct iphdr *udpip = NULL;
-	struct udphdr *udp  = NULL; 
+    struct iphdr  *iph   = NULL; 
+    struct icmp   *icmph = NULL; 
+	struct iphdr  *udpip = NULL;
+	
     char *packet = NULL; 
-  
-    int pktsize = 0x1c+ip_header->tot_len; 
+	int   cloop = 0;
+	
+	uint8_t  *copybyte = NULL;
+	uint8_t  *copyloop = NULL;
+ 
+    int pktsize =sizeof(iphdr)*2 +0x10; 
     packet =(char *)malloc (pktsize); 
 	memset (packet, 0, pktsize); 
-	char *guding         = NULL;
+	
 	char *checksum       = NULL;
 	
 	p_IPLIST TraceLoop   = NULL;
     iph      = (struct iphdr *)(packet) ; 
     icmph    = (struct icmp  *)(packet + sizeof(iphdr)); 
 	udpip    = (struct iphdr *)(packet + sizeof(iphdr)+8); 
-	udp      = (struct udphdr*)(packet + sizeof(iphdr)+8+sizeof(iphdr));
-
+	copybyte = (uint8_t *) (packet + sizeof(iphdr)+8+sizeof(iphdr)); 
+	
     /* IP的版本,IPv4 */
     iph->version = 4; 
     /* IP头部长度,字节数 */
     iph->ihl = 5; 
     /* 服务类型 */
-    iph->tos = 0x0; 
     /* IP报文的总长度 */
     iph->tot_len = htons (pktsize); 
     /* 标识,设置为PID */
-    iph->id =(getpid() & 0xffff) | 0x8000;
-	//iph->id = htons (0x1a6b);
-	
-    /* 段的便宜地址 */
+    // iph->id //自动填充
+    /* 段的偏移地址 */
     iph->frag_off = 0;
     /* TTL */
     iph->ttl = 0xff-ip_header->ttl+thisttl; 
+	
+	//只有跟发起端直连的下一跳，这里才是0
+	if(iph->ttl == 0xff)
+	{
+		iph->tos = 0xc0;
+	}
+	else
+	{
+		iph->tos = 0x0;
+	}
     /* 协议类型 */
     iph->protocol = PROTO_ICMP; 
-	//iph->ip_p = 0; 
-    /* 校验和,先填写为0 */
-    //iph->check = ip_header->check; 
-	// iph->check = htons(0x9332); 
+    /* 校验和,自动填充 */
+	//iph->check 
     /* 发送的源地址 */
-   
-    iph->saddr = saddr;  
-	printf("the source is : %x ,dest addr is %x \n", saddr,ip_header->saddr);
+    iph->saddr = saddr; 
     /* 发送目标地址 */
-	
     iph->daddr = ip_header->saddr;
-
-  
+	
  
     /* ICMP类型为超时 */
 	icmph->icmp_type = ICMP_TIMXCEED;  
     /* 代码为0 */
     icmph->icmp_code = ICMP_TIMXCEED_INTRANS; 
 	icmph->icmp_seq = 0;
-    /* 由于数据部分为0,并且代码为0,直接对不为0即icmp_type部分计算 */
-    //icmph->icmp_cksum =   cal_chksum((unsigned short *)icmph,64);
-	icmph->icmp_cksum = htons(0x1c54);
 	
 	
 	/* IP的版本,IPv4 */
-    udpip->version = ip_header->version; 
+    udpip->version = ip_header->version;  
     /* IP头部长度,字节数 */
-    udpip->ihl = ip_header->ihl ; 
+    udpip->ihl = ip_header->ihl ;  
     /* 服务类型 */
-    udpip->tos = ip_header->tos; 
+    udpip->tos = ip_header->tos;  
     /* IP报文的总长度 */
-    udpip->tot_len = ip_header->tot_len ; 
+    udpip->tot_len = ip_header->tot_len ;  
     /* 标识,设置为PID */
-    udpip->id =ip_header->id;//weisha  !!!!!!!!
-	//udpip->id = htons(0x9c1e);//weisha  !!!!!!!!
-	//ip_header->id;
-	
+    udpip->id =ip_header->id;
     /* 段的便宜地址 */
-    udpip->frag_off = ip_header->frag_off;
+    udpip->frag_off = ip_header->frag_off; 
     /* TTL */
-	udpip->ttl = 1; 
-	//udpip->ttl = ip_header->ttl;
+	udpip->ttl = 1;               //此处需注意，不能拷贝原来的序号，中间节点要置为1
     /* 协议类型 */
-    udpip->protocol = ip_header->protocol; 
-	
-    /* 校验和,先填写为0 */
-    udpip->check = ip_header->check;//weisha  !!!!!!!!
+    udpip->protocol = ip_header->protocol;    
+    /* 校验和 */
+    udpip->check = ip_header->check;
 	
     /* 发送的源地址 */
-    
-    udpip->saddr = ip_header->saddr ;     
+    udpip->saddr = ip_header->saddr ;    
     /* 发送目标地址 */
-    udpip->daddr = ip_header->daddr;
+    udpip->daddr = ip_header->daddr;     
 	
+	/* 拷贝8字节报文 */
+	for( cloop= 0;cloop < 8;cloop++ )
+	{
+		*copybyte++ = *copy++;
+	} 
 
-	udp->source = iudp->source;
-	udp->dest   = iudp->dest;
-	udp->len    = iudp->len;
-	udp->check  = iudp->check;
-
-	
-
+	/* 计算icmp报文校验和 */
+	icmph->icmp_cksum = cal_chksum((uint16_t *)icmph,(pktsize - sizeof(iphdr))/2) ;
     /* 填写发送目的地址部分 */
     to.sin_family =  AF_INET; 
     to.sin_addr.s_addr = ip_header->saddr;
     to.sin_port = htons(0);
 	
-	
+	printf("the source is : %x ,dest addr is %x \n", saddr,ip_header->saddr);
     /* 发送数据 */
     sendto(rawsock, packet, pktsize, 0, (struct sockaddr *) &to, sizeof (struct sockaddr)); 
     /* 释放内存 */
 	
     free (packet);
 }
-/*********************************************************************************
-  *Function:  do_delay
-  *Description：根据IP地址所在的网段，执行相应的延时，默认15ms
-  *Calls:  NULL
-  *Called By:  thread_start
-  *Input:  待延时的IP地址
-  *Output:  NULL
-  *Return:  延时结果
-  *date:  2013-05-23
-**********************************************************************************/
-int  do_delay( uint32_t uiIPaddr )
-{
-	p_IPLIST plist = NULL;
-	plist = &(*gHead_Iplist);
 
-	while( plist != NULL )
-	{
-		/*check if at the same ip area*/
-		if( ( uiIPaddr >>(32-(plist->uimask)) ) == (( plist->uiaddr )>>( 32-(plist->uimask) )))
-		{
-			if( 0 == plist->ftime )
-			{
-				usleep(defaultime*1000);
-			}
-			else
-			{
-				usleep( plist->ftime*1000 );
-			}
-			return OK;
-		}
-		
-		plist = plist->next;
-	}
-	usleep(defaultime*1000);
-	return -1;
-}
-/*********************************************************************************
-  *Function:  thread_start
-  *Description：根据报文的属性，决定并执行相应延时
-  *Calls:  NULL
-  *Called By:  creat_thread
-  *Input:  待延时的报文属性结构体指针，包括qh，包ID，Ip地址
-  *Output:  NULL
-  *Return:  线程结束
-  *date:  2013-05-23
-**********************************************************************************/
-static void * thread_start(void * p_Node)
-{
-	packet_info_t  node = {0};
-	node = *(packet_info_t *) p_Node ;
-	
-	
-	if( node.ipaddr == 0 )
-	{
-		free(p_Node);
-		pthread_exit(NULL);
-	}
-	
-	do_delay( node.ipaddr );
-	nfq_set_verdict( node.qh,node.i_pack_id,NF_ACCEPT,0,NULL );
-	free(p_Node);
-	pthread_exit(NULL);
-}
+
 /*********************************************************************************
   *Function:  get_packet_id
   *Description：获取包Id并返回
@@ -490,57 +368,17 @@ u_int32_t get_packet_id ( struct nfq_data *tb )
 	}
 	return pkt_id;
 }
+
 /*********************************************************************************
-  *Function:  creat_thread
-  *Description：创建延时线程
+  *Function:  input_handler
+  *Description：回调函数
   *Calls:  NULL
   *Called By:  input_handler
-  *Input:  id_packet，IP地址，和队列句柄qh
+  *Input:  待处理的报文属性
   *Output:  NULL
   *Return:  pkt_id
-  *date:  2013-05-23
+  *date:  2013-06-14
 **********************************************************************************/
-uint32_t creat_thread(uint32_t id_packet, uint32_t addr, struct nfq_q_handle *qh)
-{
-	uint32_t  uiBit8   = 0;
-	uint32_t  uiBit16  = 0;
-	uint32_t  uiBit24  = 0;
-	uint32_t  uiBit32  = 0;
-	uint32_t  uiIPaddr = 0;
-	pthread_t pthread_id;
-	
-	
-	uiBit8  = (( addr&0xFF000000)>>24);
-	uiBit16 = (( addr&0xFF0000)>>16);
-	uiBit24 = (( addr&0xFF00)>>8);
-	uiBit32 = (addr&0xFF);
-	
-	uiIPaddr = ((uiBit32<<24)+(uiBit24<<16) +(uiBit16<<8)+uiBit8);
-	
-	
-	packet_info_t * p_Node = NULL;
-	p_Node = ( packet_info_t * )malloc(sizeof(packet_info_t));
-	
-	
-	p_Node->ipaddr = uiIPaddr;
-	p_Node->i_pack_id = id_packet;
-	p_Node->qh = qh;
-			
-
-			
-	pthread_create(&pthread_id,NULL,&thread_start,(void*)p_Node);
-	
-	if ( 0 != pthread_detach(pthread_id))
-	{
-		printf("pthread_join error!\n");
-		exit(1);
-	}	
-	
-	return OK;
-}
-
-
-
 uint32_t input_handler( struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,struct nfq_data *nfa, void *data)
 {
 	//first judge ipv4 or ipv6
@@ -552,14 +390,16 @@ uint32_t input_handler( struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,struct n
 	uint32_t ttloop      = 0;
 	uint32_t cloop       = 0;
 	uint8_t   *	copy   = NULL;
-	uint8_t   *    cp     = NULL;
-	uint8_t   *    cploop = NULL;
+	uint8_t   * cp     = NULL;
+	uint8_t   * cploop = NULL;
 	p_IPLIST TraceLoop   = NULL;
+	
 	if( i_mark != INPUT_MARK )
 	{
 		nfq_set_verdict(qh,id_packet,NF_ACCEPT,0,NULL);
 		return id_packet;
 	}
+	
 	unsigned char * ip_payload_data = NULL;
 	int i_payload_len = nfq_get_payload(nfa,&ip_payload_data);
 	if( -1 == i_payload_len )
@@ -567,29 +407,20 @@ uint32_t input_handler( struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,struct n
 		nfq_set_verdict( qh,id_packet,NF_ACCEPT,0,NULL );
 		return id_packet;
 	}
+	
 	ip_version * p_version = (ip_version*)(ip_payload_data);
 	if( 4 != p_version->version )
 	{
 		nfq_set_verdict( qh,id_packet,NF_ACCEPT,0,NULL );
 		return id_packet;
 	}
+	
 	struct iphdr * ip_header = (iphdr*)(ip_payload_data);
-
+	
 	if(  ip_header->protocol == IPPROTO_UDP && ip_header->daddr ==htons32(0x0a0a1401))
-	{
-		
-		
+	{	
 		copy = (uint8_t *)(ip_payload_data + sizeof(iphdr));
 		
-		
-		
-		
-		//if( (udp->source == 0x8900 || udp->len != 0x2800) && udp->len != 0x1400 )
-		//{
-		//	printf("now i will accept it !\n");
-		//	nfq_set_verdict(qh,id_packet,NF_ACCEPT,0,NULL);
-		//	return id_packet;
-		//}
 		if( 0xFFFF == thisttl )
 		{
 			if( ip_header->ttl > maxttl )
@@ -615,22 +446,22 @@ uint32_t input_handler( struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,struct n
 		
 		
 		printf("ip_header->ttl = %d nodnum is %d  thisttl = %d\n",ip_header->ttl,nodnum,thisttl);
-		/*if( ip_header->ttl < nodnum+thisttl && ip_header->daddr != htons32(TraceLoop->uiaddr))
+		if( ip_header->ttl < nodnum+thisttl && ip_header->daddr != htons32(TraceLoop->uiaddr))
 		{
 			
-			back_mid_icmp(udp,ip_header,htons32(TraceLoop->uiaddr));
+			send_mid_icmp(ip_header,htons32(TraceLoop->uiaddr),copy);
 		}
 		else if(ip_header->ttl == nodnum+thisttl||ip_header->daddr == htons32(TraceLoop->uiaddr))
-		{*/
-			DoS_icmp(ip_header,copy);
-			/*maxttl = ip_header->ttl;
+		{
+			send_last_icmp(ip_header,copy);
+			maxttl = ip_header->ttl;
 			sendlast++;
 			if(sendlast == 3)
 			{
 				thisttl  =  0xFFFF;
 				sendlast = 0;
 			}
-		}*/
+		}
 	
 		
 	}
