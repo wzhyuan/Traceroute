@@ -46,6 +46,7 @@ uint32_t nodnum      =  0;
 uint32_t thisttl     =  0xffff;
 uint32_t sendlast    =  0;
 uint32_t maxttl      =  0xffff;
+uint32_t sendseq     =  0;
 typedef struct
 {
 	#if __BYTE_ORDER == __LITTLE_ENDIAN
@@ -125,17 +126,18 @@ uint16_t cal_chksum(uint16_t *add,int len)
   *Return:  延时结果
   *date:  2013-05-23
 **********************************************************************************/
-static void send_last_icmp ( struct iphdr * ip_header, uint8_t * copy )
+static void send_last_icmp ( struct iphdr * ip_header, struct udphdr *udp_header, uint8_t * copy )
 { 
     struct sockaddr_in to; 
     struct iphdr    *iph   = NULL; 
     struct icmp     *icmph = NULL; 
 	struct iphdr    *udpip = NULL; 
+	struct udphdr   *udpudp = NULL; 
 	uint8_t  *copybyte = NULL; 
 	uint8_t  *copyloop = NULL; 
     char  *packet  = NULL; 
 	int   cloop    = 0;
-   
+    uint32_t sum = 0;
     int pktsize = (ip_header->tot_len>>8)+sizeof(iphdr)+sizeof(icmph); 
 	
     packet =(char *)malloc (pktsize); 
@@ -144,7 +146,8 @@ static void send_last_icmp ( struct iphdr * ip_header, uint8_t * copy )
     iph    = (struct iphdr *) (packet) ; 
     icmph  = (struct icmp *)  (packet + sizeof(iphdr)); 
 	udpip  = (struct iphdr *) (packet+sizeof(iphdr)+sizeof(icmph)) ; 
-	copybyte   = (uint8_t *) (packet + sizeof(iphdr)+sizeof(icmph)+sizeof(iphdr)); 
+	udpudp = (struct udphdr *) (packet+sizeof(iphdr)+sizeof(icmph)+sizeof(iphdr)) ; 
+	copybyte   = (uint8_t *) (packet + sizeof(iphdr)+sizeof(icmph)+sizeof(iphdr)+sizeof(udphdr)); 
 	
    
     /* IP的版本,IPv4 */
@@ -196,30 +199,37 @@ static void send_last_icmp ( struct iphdr * ip_header, uint8_t * copy )
     /* 段的便宜地址 */
     udpip->frag_off = ip_header->frag_off;
     /* TTL */
-    udpip->ttl = ip_header->ttl; 
+    udpip->ttl = 1; 
     /* 协议类型 */
     udpip->protocol = ip_header->protocol; 
-    udpip->check = ip_header->check ; 
+    udpip->check = 0 ; //重新计算！！！
     /* 发送的源地址 */
     udpip->saddr = ip_header->saddr ;     
     /* 发送目标地址 */
     udpip->daddr = ip_header->daddr;
+	udpip->check =  cal_chksum((uint16_t *)udpip,sizeof(iphdr)/2) ;
 	
+	
+	udpudp->source = udp_header->source;
+	udpudp->dest   = udp_header->dest;
+	udpudp->len    = udp_header->len;
+	udpudp->check  = 0;
+		
 	
 	//copy 剩下的字节
-	for(cloop = 0; cloop < (ip_header->tot_len>>8)-sizeof(iphdr);cloop++)
+	for(cloop = 0; cloop < (ip_header->tot_len>>8)-sizeof(iphdr)-sizeof(udphdr);cloop++)
 	{
 		*copybyte++ = *copy++;
 	}
 	
-	icmph->icmp_cksum = cal_chksum((uint16_t *)icmph,(pktsize - sizeof(iphdr))/2) ;
+	
 	
 	
     /* 填写发送目的地址部分 */
     to.sin_family =  AF_INET; 
     to.sin_addr.s_addr = ip_header->saddr;
     to.sin_port = htons(0);
-	
+	icmph->icmp_cksum = cal_chksum((uint16_t *)icmph,(pktsize - sizeof(iphdr))/2) ;
 	printf("last hop  source is : %x ,dest addr is %x \n", ip_header->daddr,ip_header->saddr);
     /* 发送数据 */
     sendto(rawsock, packet, pktsize, 0, (struct sockaddr *) &to, sizeof (struct sockaddr)); 
@@ -237,30 +247,32 @@ static void send_last_icmp ( struct iphdr * ip_header, uint8_t * copy )
   *Return:  延时结果
   *date:  2013-05-23
 **********************************************************************************/
-static void send_mid_icmp( struct iphdr * ip_header, uint32_t saddr , uint8_t * copy)
+static void send_mid_icmp( struct iphdr * ip_header, uint32_t saddr ,struct udphdr *udp_header, uint8_t * copy)
 { 
     struct sockaddr_in to; 
     struct iphdr  *iph   = NULL; 
     struct icmp   *icmph = NULL; 
 	struct iphdr  *udpip = NULL;
-	
+	struct udphdr *udp   = NULL;
     char *packet = NULL; 
 	int   cloop = 0;
 	
 	uint8_t  *copybyte = NULL;
 	uint8_t  *copyloop = NULL;
- 
-    int pktsize =sizeof(iphdr)*2 +0x10; 
-    packet =(char *)malloc (pktsize); 
+    uint32_t sum = 0;
+    int pktsize = (ip_header->tot_len>>8)+sizeof(iphdr)+sizeof(icmph); 
+    packet = (char *)malloc (pktsize); 
 	memset (packet, 0, pktsize); 
 	
-	char *checksum       = NULL;
+	
+	
 	
 	p_IPLIST TraceLoop   = NULL;
     iph      = (struct iphdr *)(packet) ; 
     icmph    = (struct icmp  *)(packet + sizeof(iphdr)); 
 	udpip    = (struct iphdr *)(packet + sizeof(iphdr)+sizeof(icmph)); 
-	copybyte = (uint8_t *) (packet + sizeof(iphdr)+sizeof(icmph)+sizeof(iphdr)); 
+	udp      = (struct udphdr *) (packet + sizeof(iphdr)+sizeof(icmph)+sizeof(iphdr)); 
+	copybyte = (uint8_t *) (packet + sizeof(iphdr)+sizeof(icmph)+sizeof(iphdr)+sizeof(udphdr)); 
 	
     /* IP的版本,IPv4 */
     iph->version = 4; 
@@ -274,7 +286,7 @@ static void send_mid_icmp( struct iphdr * ip_header, uint32_t saddr , uint8_t * 
     /* 段的偏移地址 */
     iph->frag_off = 0;
     /* TTL */
-    iph->ttl = 0xff-ip_header->ttl+thisttl; 
+    iph->ttl = 0x40-ip_header->ttl+1; 
 	
 	//只有跟发起端直连的下一跳，这里才是0
 	if(iph->ttl == 0xff)
@@ -294,7 +306,7 @@ static void send_mid_icmp( struct iphdr * ip_header, uint32_t saddr , uint8_t * 
     /* 发送目标地址 */
     iph->daddr = ip_header->saddr;
 	
- 
+	
     /* ICMP类型为超时 */
 	icmph->icmp_type = ICMP_TIMXCEED;  
     /* 代码为0 */
@@ -309,36 +321,47 @@ static void send_mid_icmp( struct iphdr * ip_header, uint32_t saddr , uint8_t * 
     /* 服务类型 */
     udpip->tos = ip_header->tos;  
     /* IP报文的总长度 */
-    udpip->tot_len = ip_header->tot_len ;  
+    udpip->tot_len = ip_header->tot_len;  
     /* 标识,设置为PID */
     udpip->id =ip_header->id;
     /* 段的便宜地址 */
     udpip->frag_off = ip_header->frag_off; 
     /* TTL */
-	udpip->ttl = ip_header->ttl;
+	udpip->ttl = 1;
     /* 协议类型 */
     udpip->protocol = ip_header->protocol;    
     /* 校验和 */
-    udpip->check = ip_header->check;
+    udpip->check = 0;
 	
     /* 发送的源地址 */
     udpip->saddr = ip_header->saddr ;    
     /* 发送目标地址 */
     udpip->daddr = ip_header->daddr;     
+	udpip->check =  cal_chksum((uint16_t *)udpip,sizeof(iphdr)/2) ;
 	
-	/* 拷贝8字节报文 */
-	for( cloop= 0;cloop < 8;cloop++ )
-	{
-		*copybyte++ = *copy++;
-	} 
 
-	/* 计算icmp报文校验和 */
-	icmph->icmp_cksum = cal_chksum((uint16_t *)icmph,(pktsize - sizeof(iphdr))/2) ;
+	udp->source = udp_header->source;
+	udp->dest   = udp_header->dest;
+	udp->len    = udp_header->len;
+	udp->check  = udp_header->check;
+	
+	
+	for( cloop = 0;cloop < ((ip_header->tot_len)>>8)-sizeof(iphdr)-sizeof(udphdr); cloop++ )
+	{
+		
+		*copybyte++ = *copy++;
+		
+	} 
+	
+
+	
     /* 填写发送目的地址部分 */
     to.sin_family =  AF_INET; 
     to.sin_addr.s_addr = ip_header->saddr;
     to.sin_port = htons(0);
 	
+	/* 计算icmp报文校验和 */
+	icmph->icmp_cksum = cal_chksum((uint16_t *)icmph,(pktsize - sizeof(iphdr))/2) ;
 	printf("the source is : %x ,dest addr is %x \n", saddr,ip_header->saddr);
     /* 发送数据 */
     sendto(rawsock, packet, pktsize, 0, (struct sockaddr *) &to, sizeof (struct sockaddr)); 
@@ -389,11 +412,12 @@ uint32_t input_handler( struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,struct n
 	uint32_t flag        = 0;
 	uint32_t ttloop      = 0;
 	uint32_t cloop       = 0;
-	uint8_t   *	copy   = NULL;
+	uint32_t sum       = 0;
+	uint8_t   * copy   = NULL;
 	uint8_t   * cp     = NULL;
 	uint8_t   * cploop = NULL;
 	p_IPLIST TraceLoop   = NULL;
-	
+	struct udphdr *udp = NULL;
 	if( i_mark != INPUT_MARK )
 	{
 		nfq_set_verdict(qh,id_packet,NF_ACCEPT,0,NULL);
@@ -417,23 +441,15 @@ uint32_t input_handler( struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,struct n
 	
 	struct iphdr * ip_header = (iphdr*)(ip_payload_data);
 	
-	if(  ip_header->protocol == IPPROTO_UDP && ip_header->daddr ==htons32(0x0a0a1401))
+	if(  ip_header->protocol == IPPROTO_UDP )
 	{	
-		copy = (uint8_t *)(ip_payload_data + sizeof(iphdr));
+		udp   = (struct udphdr *) (ip_payload_data + sizeof(iphdr)); 
+		copy  = (uint8_t *)(ip_payload_data + sizeof(iphdr)+sizeof(udphdr));
 		
-		if( 0xFFFF == thisttl )
+		ttloop = sendseq/3; 
+		if(ttloop > nodnum || ip_header->ttl>nodnum+1)
 		{
-			if( ip_header->ttl > maxttl )
-			{
-				nfq_set_verdict(qh,id_packet,NF_DROP,0,NULL);
-				return id_packet;
-			}
-			thisttl = ip_header->ttl; 
-		}
-		ttloop = ip_header->ttl-thisttl; 
-		if(ttloop > nodnum)
-		{
-			nfq_set_verdict(qh,id_packet,NF_DROP,0,NULL);
+			nfq_set_verdict(qh,id_packet,NF_ACCEPT,0,NULL);
 			return id_packet;
 		}
 		TraceLoop = &(*gHead_Iplist);
@@ -445,16 +461,18 @@ uint32_t input_handler( struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,struct n
 		nfq_set_verdict( qh,id_packet,NF_DROP,0,NULL );
 		
 		
-		printf("ip_header->ttl = %d nodnum is %d  thisttl = %d\n",ip_header->ttl,nodnum,thisttl);
-		if( ip_header->ttl < nodnum+thisttl && ip_header->daddr != htons32(TraceLoop->uiaddr))
+	
+	
+		printf("ip_header->ttl = %d nodnum is %d  \n",ip_header->ttl,nodnum);
+		if( ip_header->ttl <= nodnum)
 		{
 			usleep(TraceLoop->ftime*1000);
-			send_mid_icmp(ip_header,htons32(TraceLoop->uiaddr),copy);
-			
+			send_mid_icmp(ip_header,htons32(TraceLoop->uiaddr),udp,copy);
+
 		}
-		else if(ip_header->ttl == nodnum+thisttl||ip_header->daddr == htons32(TraceLoop->uiaddr))
+		else if(ip_header->ttl== nodnum+1)
 		{
-			send_last_icmp(ip_header,copy);
+			send_last_icmp(ip_header,udp,copy);
 			maxttl = ip_header->ttl;
 			sendlast++;
 			if(sendlast == 3)
@@ -463,6 +481,7 @@ uint32_t input_handler( struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,struct n
 				sendlast =  0;
 			}
 		}
+		
 	}
 	return id_packet;
 }
@@ -596,7 +615,7 @@ int main( int argc, char *argv[] )
     int err = -1;
     unsigned long  temp;
 	
-	if(argc != 2)
+	if(argc != 1)
 	{
 		printf("please input ./trace  *default delay time(ms)*\n");
 		return 0;
@@ -620,9 +639,9 @@ int main( int argc, char *argv[] )
 	
 	
 	
-	int itime = 0;
-	sscanf(argv[1],"%d",&itime);
-	defaultime = itime;
+	//int itime = 0;
+	//sscanf(argv[1],"%d",&itime);
+	//defaultime = itime;
 	
 	struct nfq_handle *  handler = nfq_open();
 	if (!handler)
