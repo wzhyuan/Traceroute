@@ -43,10 +43,8 @@ static int rawsock;
 
 uint32_t defaultime  =  0;
 uint32_t nodnum      =  0;
-uint32_t thisttl     =  0xffff;
 uint32_t sendlast    =  0;
-uint32_t maxttl      =  0xffff;
-uint32_t sendseq     =  0;
+
 typedef struct
 {
 	#if __BYTE_ORDER == __LITTLE_ENDIAN
@@ -446,13 +444,14 @@ uint32_t input_handler( struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,struct n
 		udp   = (struct udphdr *) (ip_payload_data + sizeof(iphdr)); 
 		copy  = (uint8_t *)(ip_payload_data + sizeof(iphdr)+sizeof(udphdr));
 		
-		ttloop = sendseq/3; 
+		ttloop = ip_header->ttl-1; 
 		if(ttloop > nodnum || ip_header->ttl>nodnum+1)
 		{
 			nfq_set_verdict(qh,id_packet,NF_ACCEPT,0,NULL);
 			return id_packet;
 		}
 		TraceLoop = &(*gHead_Iplist);
+	
 		while( TraceLoop != NULL && ttloop-- )
 		{
 				TraceLoop = TraceLoop->next;
@@ -473,11 +472,9 @@ uint32_t input_handler( struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,struct n
 		else if(ip_header->ttl== nodnum+1)
 		{
 			send_last_icmp(ip_header,udp,copy);
-			maxttl = ip_header->ttl;
 			sendlast++;
 			if(sendlast == 3)
 			{
-				thisttl  =  0xFFFF;
 				sendlast =  0;
 			}
 		}
